@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash /Users/aworms/src/andy-bot/all.sh)",
+      "Bash(all.sh)",
+      "Bash(bash all.sh)",
+      "Bash(uv run clickup-main.py)",
+      "Bash(uv run clickup-main.py sprint)",
+      "Bash(uv run clickup-main.py yesterday)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ],
+    "ask": [
+      "Bash(git push:*)"
+    ]
+  }
+}
