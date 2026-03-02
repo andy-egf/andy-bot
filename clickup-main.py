@@ -143,6 +143,49 @@ def add_comment(task_id: str, comment_text: str) -> dict:
     return api_post(f"/task/{task_id}/comment", {"comment_text": comment_text})
 
 
+def get_workspace_members(team_id: str) -> list:
+    """Get all members of a workspace."""
+    team_data = api_get(f"/team/{team_id}")
+    return team_data.get("team", {}).get("members", [])
+
+
+def find_member_by_name(team_id: str, search_term: str) -> dict | None:
+    """Find a workspace member by username or email (partial match)."""
+    members = get_workspace_members(team_id)
+    search_lower = search_term.lower()
+    for member in members:
+        user = member.get("user")
+        if not user:
+            continue
+        username = (user.get("username") or "").lower()
+        email = (user.get("email") or "").lower()
+        if search_lower in username or search_lower in email:
+            return user
+    return None
+
+
+def assign_task(task_id: str, assignee_ids: list[int]) -> dict:
+    """Assign users to a task. Replaces existing assignees."""
+    return api_put(f"/task/{task_id}", {"assignees": assignee_ids})
+
+
+def add_assignee_to_task(task_id: str, assignee_id: int) -> dict:
+    """Add an assignee to a task (keeps existing assignees)."""
+    return api_put(f"/task/{task_id}", {
+        "assignees": {"add": [assignee_id], "rem": []}
+    })
+
+
+def add_comment_with_mention(task_id: str, comment_text: str, mention_user_id: int) -> dict:
+    """Add a comment that mentions/tags a user (notifies them)."""
+    comment_data = {
+        "comment_text": comment_text,
+        "assignee": mention_user_id,
+        "notify_all": False
+    }
+    return api_post(f"/task/{task_id}/comment", comment_data)
+
+
 def add_task_to_list(list_id: str, task_id: str) -> dict:
     """Add a task to a list (move to sprint)."""
     response = httpx.post(
@@ -152,6 +195,19 @@ def add_task_to_list(list_id: str, task_id: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def create_task(list_id: str, name: str, description: str = None,
+                assignee_ids: list[int] = None, time_estimate_ms: int = None) -> dict:
+    """Create a new task in a list."""
+    data = {"name": name}
+    if description:
+        data["description"] = description
+    if assignee_ids:
+        data["assignees"] = assignee_ids
+    if time_estimate_ms:
+        data["time_estimate"] = time_estimate_ms
+    return api_post(f"/list/{list_id}/task", data)
 
 
 def get_current_sprint_list() -> tuple[dict, str] | None:
@@ -516,7 +572,7 @@ def cmd_status(args):
     ticket_number = args.ticket.upper()
     new_status = args.status.lower()
 
-    valid_statuses = ["to do", "in progress", "review"]
+    valid_statuses = ["to do", "in progress", "review", "in review"]
     if new_status not in valid_statuses:
         print(f"Error: Invalid status '{new_status}'")
         print(f"Valid statuses: {', '.join(valid_statuses)}")
@@ -592,6 +648,164 @@ def cmd_move_to_sprint(args):
         sys.exit(1)
 
 
+def cmd_assign(args):
+    """Assign a ticket to a user."""
+    ticket_number = args.ticket.upper()
+    assignee_search = args.assignee
+
+    task, team_id = lookup_task(ticket_number)
+    task_id = task.get("id")
+    title = task.get("name", "")
+
+    print(f"Ticket: {ticket_number}")
+    print(f"Title:  {title}")
+    print(f"\nSearching for user '{assignee_search}'...")
+
+    user = find_member_by_name(team_id, assignee_search)
+    if not user:
+        print(f"Error: No user found matching '{assignee_search}'")
+        print("\nAvailable members:")
+        members = get_workspace_members(team_id)
+        for member in members:
+            u = member.get("user")
+            if u:
+                print(f"  - {u.get('username', 'N/A')} ({u.get('email', 'N/A')})")
+        sys.exit(1)
+
+    user_id = user.get("id")
+    username = user.get("username", "Unknown")
+
+    print(f"Found user: {username}")
+    print(f"Assigning ticket...")
+
+    try:
+        if args.add:
+            add_assignee_to_task(task_id, user_id)
+            print(f"\nSuccess! Added {username} to {ticket_number}")
+        else:
+            assign_task(task_id, [user_id])
+            print(f"\nSuccess! Assigned {ticket_number} to {username}")
+    except httpx.HTTPStatusError as e:
+        print(f"\nError: {e.response.status_code} - {e.response.text}")
+        sys.exit(1)
+
+
+def cmd_mention(args):
+    """Add a comment that mentions/tags a user."""
+    ticket_number = args.ticket.upper()
+    user_search = args.user
+    comment_text = args.message
+
+    task, team_id = lookup_task(ticket_number)
+    task_id = task.get("id")
+    title = task.get("name", "")
+
+    print(f"Ticket: {ticket_number}")
+    print(f"Title:  {title}")
+    print(f"\nSearching for user '{user_search}'...")
+
+    user = find_member_by_name(team_id, user_search)
+    if not user:
+        print(f"Error: No user found matching '{user_search}'")
+        print("\nAvailable members:")
+        members = get_workspace_members(team_id)
+        for member in members:
+            u = member.get("user")
+            if u:
+                print(f"  - {u.get('username', 'N/A')} ({u.get('email', 'N/A')})")
+        sys.exit(1)
+
+    user_id = user.get("id")
+    username = user.get("username", "Unknown")
+
+    print(f"Found user: {username}")
+    print(f"Adding comment with mention...")
+
+    try:
+        add_comment_with_mention(task_id, comment_text, user_id)
+        print(f"\nSuccess! Comment added mentioning @{username}")
+    except httpx.HTTPStatusError as e:
+        print(f"\nError: {e.response.status_code} - {e.response.text}")
+        sys.exit(1)
+
+
+def cmd_create(args):
+    """Create a new ticket in the current sprint."""
+    title = args.title
+    body = args.body
+    assignee_search = args.assignee
+    days = args.days
+
+    print("Finding current sprint...")
+    sprint_result = get_current_sprint_list()
+    if not sprint_result:
+        print("Error: Could not find current sprint list")
+        sys.exit(1)
+
+    sprint_list, space_name = sprint_result
+    sprint_list_id = sprint_list.get("id")
+    sprint_name = sprint_list.get("name")
+
+    print(f"Sprint: {sprint_name} ({space_name})")
+
+    # Get team_id for user lookup
+    teams = get_teams()
+    if not teams:
+        print("Error: No workspaces found")
+        sys.exit(1)
+    team_id = teams[0].get("id")
+
+    # Resolve assignee if provided
+    assignee_ids = None
+    assignee_username = None
+    if assignee_search:
+        print(f"Searching for user '{assignee_search}'...")
+        user = find_member_by_name(team_id, assignee_search)
+        if not user:
+            print(f"Error: No user found matching '{assignee_search}'")
+            print("\nAvailable members:")
+            members = get_workspace_members(team_id)
+            for member in members:
+                u = member.get("user")
+                if u:
+                    print(f"  - {u.get('username', 'N/A')} ({u.get('email', 'N/A')})")
+            sys.exit(1)
+        assignee_ids = [user.get("id")]
+        assignee_username = user.get("username", "Unknown")
+        print(f"Found user: {assignee_username}")
+
+    # Convert days to time estimate (milliseconds)
+    # 1 day = 8 hours = 8 * 60 * 60 * 1000 ms = 28,800,000 ms
+    time_estimate_ms = None
+    if days:
+        time_estimate_ms = int(days * 8 * 60 * 60 * 1000)
+
+    print(f"\nCreating ticket...")
+    print(f"  Title: {title}")
+    if body:
+        print(f"  Description: {body[:50]}{'...' if len(body) > 50 else ''}")
+    if assignee_username:
+        print(f"  Assignee: {assignee_username}")
+    if days:
+        print(f"  Estimate: {days} day(s)")
+
+    try:
+        result = create_task(
+            list_id=sprint_list_id,
+            name=title,
+            description=body,
+            assignee_ids=assignee_ids,
+            time_estimate_ms=time_estimate_ms
+        )
+        custom_id = result.get("custom_id", result.get("id"))
+        task_url = result.get("url", "")
+        print(f"\nSuccess! Created ticket: {custom_id}")
+        print(f"URL: {task_url}")
+    except httpx.HTTPStatusError as e:
+        print(f"\nError: {e.response.status_code} - {e.response.text}")
+        sys.exit(1)
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -613,6 +827,10 @@ Examples:
   uv run clickup-main.py status ENG-3303 "in progress"   Update ticket status
   uv run clickup-main.py comment ENG-3303 "Done!"    Add a comment to a ticket
   uv run clickup-main.py move-to-sprint ENG-7101     Move ticket to current sprint
+  uv run clickup-main.py assign ENG-3303 john        Assign ticket to user (by name/email)
+  uv run clickup-main.py assign ENG-3303 john --add  Add assignee (keep existing)
+  uv run clickup-main.py mention ENG-3303 jane "Can you review?"  Tag user in comment
+  uv run clickup-main.py create --title "Fix bug" --body "Details here" --assignee john --days 2
         """
     )
 
@@ -692,6 +910,70 @@ Examples:
         help="Ticket number (e.g., ENG-7101)"
     )
     move_sprint_parser.set_defaults(func=cmd_move_to_sprint)
+
+    # assign
+    assign_parser = subparsers.add_parser(
+        "assign",
+        help="Assign a ticket to a user"
+    )
+    assign_parser.add_argument(
+        "ticket",
+        help="Ticket number (e.g., ENG-3303)"
+    )
+    assign_parser.add_argument(
+        "assignee",
+        help="Username or email (partial match) of the assignee"
+    )
+    assign_parser.add_argument(
+        "--add", "-a",
+        action="store_true",
+        help="Add assignee (keep existing). Without this flag, replaces all assignees."
+    )
+    assign_parser.set_defaults(func=cmd_assign)
+
+    # mention
+    mention_parser = subparsers.add_parser(
+        "mention",
+        help="Add a comment that tags/mentions a user"
+    )
+    mention_parser.add_argument(
+        "ticket",
+        help="Ticket number (e.g., ENG-3303)"
+    )
+    mention_parser.add_argument(
+        "user",
+        help="Username or email (partial match) of the user to mention"
+    )
+    mention_parser.add_argument(
+        "message",
+        help="Comment text"
+    )
+    mention_parser.set_defaults(func=cmd_mention)
+
+    # create
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create a new ticket in the current sprint"
+    )
+    create_parser.add_argument(
+        "--title", "-t",
+        required=True,
+        help="Ticket title"
+    )
+    create_parser.add_argument(
+        "--body", "-b",
+        help="Ticket description/body"
+    )
+    create_parser.add_argument(
+        "--assignee", "-a",
+        help="Username or email (partial match) to assign the ticket to"
+    )
+    create_parser.add_argument(
+        "--days", "-d",
+        type=float,
+        help="Time estimate in days (converts to hours: 1 day = 8 hours)"
+    )
+    create_parser.set_defaults(func=cmd_create)
 
     args = parser.parse_args()
 

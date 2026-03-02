@@ -392,10 +392,20 @@ def _print_job_summary(job: dataflow.Job) -> None:
     total_time = "N/A"
     if job.create_time and job.current_state_time:
         try:
-            start_ts = job.create_time.seconds
-            end_ts = job.current_state_time.seconds
+            # Handle both protobuf Timestamp and datetime objects
+            if hasattr(job.create_time, 'seconds'):
+                start_ts = job.create_time.seconds
+            else:
+                start_ts = int(job.create_time.timestamp())
+
+            if hasattr(job.current_state_time, 'seconds'):
+                end_ts = job.current_state_time.seconds
+            else:
+                end_ts = int(job.current_state_time.timestamp())
+
             duration_secs = end_ts - start_ts
-            total_time = format_duration(duration_secs)
+            if duration_secs > 0:
+                total_time = format_duration(duration_secs)
         except Exception:
             pass
 
