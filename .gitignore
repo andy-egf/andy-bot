@@ -1,3 +1,6 @@
+.env
+.idea
 work
 github
 project
+__pycache__

@@ -198,7 +198,8 @@ def add_task_to_list(list_id: str, task_id: str) -> dict:
 
 
 def create_task(list_id: str, name: str, description: str = None,
-                assignee_ids: list[int] = None, time_estimate_ms: int = None) -> dict:
+                assignee_ids: list[int] = None, time_estimate_ms: int = None,
+                tags: list[str] = None) -> dict:
     """Create a new task in a list."""
     data = {"name": name}
     if description:
@@ -207,6 +208,8 @@ def create_task(list_id: str, name: str, description: str = None,
         data["assignees"] = assignee_ids
     if time_estimate_ms:
         data["time_estimate"] = time_estimate_ms
+    if tags:
+        data["tags"] = tags
     return api_post(f"/list/{list_id}/task", data)
 
 
@@ -788,6 +791,10 @@ def cmd_create(args):
         print(f"  Assignee: {assignee_username}")
     if days:
         print(f"  Estimate: {days} day(s)")
+    if args.type:
+        print(f"  Type: {args.type}")
+
+    tags = [args.type] if args.type else None
 
     try:
         result = create_task(
@@ -795,7 +802,8 @@ def cmd_create(args):
             name=title,
             description=body,
             assignee_ids=assignee_ids,
-            time_estimate_ms=time_estimate_ms
+            time_estimate_ms=time_estimate_ms,
+            tags=tags,
         )
         custom_id = result.get("custom_id", result.get("id"))
         task_url = result.get("url", "")
@@ -972,6 +980,10 @@ Examples:
         "--days", "-d",
         type=float,
         help="Time estimate in days (converts to hours: 1 day = 8 hours)"
+    )
+    create_parser.add_argument(
+        "--type",
+        help="Task type tag (e.g., bug, feature, chore)"
     )
     create_parser.set_defaults(func=cmd_create)
 
