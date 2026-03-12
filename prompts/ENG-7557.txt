@@ -1,0 +1,14 @@
+Take the ticket ENG-7557 and read it's content using clickup-main.py
+
+We need to create bq queries that are equivalent to mysql queries.
+
+If you need to understand the tables, schemas  and data of the mysql queries, then use uv run mysql.py
+
+If you need to understand the tables, schemas and data of the bigquery queries, the use the bq command
+
+
+You need to write output queries each in it's own file.
+
+In bigquery you are allowed to use egfl.* dataset, which is synched from the replica database and should be the same
+
+Additionally you can use dwh.daily_loan_data which contains a daily status row for each open loan for each day
